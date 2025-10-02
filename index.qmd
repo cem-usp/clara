@@ -1,0 +1,1230 @@
+```{r}
+#| label: setup
+#| include: false
+
+library(here)
+
+source(here("R", "_setup.R"))
+```
+
+<!-- badges: start -->
+[![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-bd0000.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+<!-- badges: end -->
+
+::: {.callout-important}
+This pipeline is a Work In Progress (WIP) and is under active development. It may not yet be stable or suitable for public use. Please use it with caution and report any issues you encounter.
+:::
+
+## Overview
+
+This report provides a fully reproducible pipeline for processing `[]` using the [R programming language](https://www.r-project.org/).
+
+## Problem
+
+## Data Availability
+
+<!-- ::: {style="text-align: left;"}
+[![](https://img.shields.io/badge/OSF-10.17605/OSF.IO/ZE6WT-1284C5.svg)](https://doi.org/10.17605/OSF.IO/ZE6WT)
+:::
+
+The processed data are available in both `csv` and `rds` formats via a dedicated repository on the Open Science Framework ([OSF](https://osf.io/)), accessible [here](https://doi.org/10.17605/OSF.IO/8J94M). A metadata file is included alongside the validated data. You can also access these files directly from R using the [`osfr`](https://docs.ropensci.org/osfr/) package.
+
+A backup copy of the raw data is also available in OSF. You can access it [here](https://doi.org/10.17605/OSF.IO/SY8EC). -->
+
+## Methods
+
+### Source of Data
+
+The data used in this report come from the following sources:
+
+- [Federal Revenue Service](https://www.gov.br/receitafederal): [CNPJ database](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj)
+
+### Data Munging
+
+The data munging followed the data science workflow outlined by @wickham2023e, as illustrated in [@fig-wickham-at-al-2024-figure-1]. All processes were made using the [Quarto](https://quarto.org/) publishing system [@allaire], the [R programming language](https://www.r-project.org/) [@rcoreteama] and several R packages.
+
+Spatial data processing was performed using the [terra](https://rspatial.github.io/terra/reference/terra-package.html) R package [@hijmans]. For data manipulation and workflow, packages from the [tidyverse](https://www.tidyverse.org/) and [rOpenSci](https://ropensci.org/) ecosystems—adhering to the tidy tools manifesto [@wickham2023c]—were prioritized. All steps were designed to ensure transparency and reproducibility of results.
+
+::: {#fig-wickham-at-al-2024-figure-1}
+![](images/wickham-at-al-2024-figure-1.png){width=75%}
+
+[Source: Reproduced from @wickham2023e.]{.legend}
+
+Data science workflow created by Wickham, Çetinkaya-Runde, and Grolemund.
+:::
+
+### Code Style
+
+The Tidyverse [code style guide](https://style.tidyverse.org/) and [design principles](https://design.tidyverse.org/) were followed to ensure consistency and enhance readability.
+
+### Reproducibility
+
+The pipeline is fully reproducible and can be run again at any time. See the [README](https://github.com/danielvartan/acessosan/blob/main/README.md) file in the code repository to learn how to run it.
+
+## Set the Environment
+
+```{r}
+#| code-fold: false
+#| output: false
+
+library(brandr)
+library(beepr)
+library(cli)
+library(dplyr)
+library(fs)
+library(ggplot2)
+library(groomr) # github.com/danielvartan/groomr
+library(here)
+library(magrittr)
+library(osfr)
+library(purrr)
+library(stringr)
+library(terra)
+library(tidyterra)
+library(readr)
+library(tools)
+library(utils)
+```
+
+## Clara's code
+
+::: {.callout-info}
+Sections indicated in brackets (e.g., [Download Data]) reflect adaptations made by Daniel to Clara’s original code.
+
+Additional modifications are noted directly in the code comments.
+
+This code will be refactored in future updates.
+:::
+
+### \[Set Environment\]
+
+```{r}
+library(curl)
+library(data.table)
+library(dplyr)
+library(fs)
+library(geocodebr)
+library(here)
+library(httr2)
+library(purrr)
+library(readr)
+library(rutils) # github.com/danielvartan/rutils
+library(rvest)
+library(sf)
+library(stringr)
+library(tidyr)
+library(tools)
+library(utils)
+library(zip)
+```
+
+```{r}
+# Definir diretorio com arquivos de CNPJ
+
+cnpj_dir <- here("data-raw") # "1-inputs/CNPJ_2024"
+```
+
+```{r}
+# Definir caminhos dos diretorios
+estabelecimentos_dir <- here(cnpj_dir, "1-ESTABELECIMENTOS")
+empresas_dir <- here(cnpj_dir, "2-EMPRESAS")
+socios_dir <- here(cnpj_dir, "3-SOCIOS")
+demais_arquivos_dir <- here(cnpj_dir, "4-DEMAIS_ARQUIVOS")
+temporario_dir <- here(cnpj_dir, "5-TEMPORARIO")
+```
+
+### \[Download Data\]
+
+> Para dar proceguinto ao codigo, baixar todos os arquivos da Receita Federal do Brasil.
+>
+> - Mês de referência: 2025-01 (janeiro de 2025)
+> - URL: https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/?C=N;O=D
+> - Armazenar arquivos em CNPJ_2024 dentro de diretorio "inputs"
+
+```{r}
+data_raw_dir <- here("data-raw")
+
+if (!dir_exists(data_raw_dir)) dir_create(data_raw_dir)
+```
+
+```{r}
+root <- file.path(
+    "https://arquivos.receitafederal.gov.br",
+    "dados",
+    "cnpj",
+    "dados_abertos_cnpj"
+  )
+```
+
+```{r}
+#| eval: false
+
+urls <- character()
+
+for (i in seq_len(1)) { # for (i in seq_len(12)) {
+  i_path <-
+    root |>
+    file.path(paste0("2025-", stringr::str_pad(i, 2, pad = 0)))
+
+  urls <-
+    i_path |>
+    read_html() |>
+    html_elements("a") |>
+    html_attr("href") |>
+    str_subset("\\.zip$") %>%
+    file.path(i_path, .) |>
+    append(x = urls, values =_, after = length(urls))
+}
+```
+
+```{r}
+#| eval: false
+
+urls |>
+  map_dbl(.f = get_file_size, .progress = TRUE) |>
+  sum() |>
+  as_fs_bytes()
+```
+
+```{r}
+#| eval: false
+
+urls |> download_file(dir = data_raw_dir)
+
+beep()
+```
+
+### 01.01-preparar_arquivos_cnpj.R
+
+> Em todos os arquivos do site passam por unzip e são organizados em pastas.
+
+#### Descompactar Arquivos de CNPJ e Organizá-los em Diretórios
+
+> Definir subdiretórios.
+
+```{r}
+subdiretorios <- c(
+  "1-ESTABELECIMENTOS",
+  "2-EMPRESAS",
+  "3-SOCIOS",
+  "4-DEMAIS_ARQUIVOS"
+)
+```
+
+> Criar subdiretórios no diretório caso nao existam.
+
+```{r}
+for (subdir in subdiretorios) {
+  caminho <- file.path(cnpj_dir, subdir)
+
+  # Verificar se o diretorio existe
+  if (!file.exists(caminho)) {
+    dir.create(caminho, recursive = TRUE)
+    cat("Diretorio criado:", caminho, "\n")
+  } else {
+    cat("Diretorio ja existe:", caminho, "\n")
+  }
+}
+```
+
+```{r}
+# Definir diret?rios de destino para extra??o
+diretorios_destino <- list(
+  "Estabelecimentos" = file.path(cnpj_dir, "1-ESTABELECIMENTOS"),
+  "Empresas" = file.path(cnpj_dir, "2-EMPRESAS"),
+  "Socios" = file.path(cnpj_dir, "3-SOCIOS"),
+  "Demais_Arquivos" = file.path(cnpj_dir, "4-DEMAIS_ARQUIVOS")
+)
+```
+
+> Definir função para descompactar os arquivos.
+
+```{r}
+#| eval: false
+
+unzip_arquivos <- function() {
+  arquivos_zip <- list.files(cnpj_dir, pattern = "\\.zip$", full.names = TRUE, recursive = TRUE)
+
+  for (zip_file_path in arquivos_zip) {
+    # Define o diretorio de destino baseado no nome do arquivo zip
+    file_name <- basename(zip_file_path)
+    if (grepl("^Estabelecimentos", file_name)) {
+      destino <- diretorios_destino$Estabelecimentos
+    } else if (grepl("^Empresas", file_name)) {
+      destino <- diretorios_destino$Empresas
+    } else if (grepl("^Socios", file_name)) {
+      destino <- diretorios_destino$Socios
+    } else {
+      destino <- diretorios_destino$Demais_Arquivos
+    }
+
+    # Cria o diretorio de destino se nao existir
+    if (!dir.exists(destino)) {
+      dir.create(destino, recursive = TRUE)
+    }
+
+    # (Daniel) Using the `zip` package for an OS-independent solution
+    zip_file_path |> unzip(, exdir = destino)
+
+    # Extracao do conteudo do arquivo .zip
+    # unzip(zip_file_path, exdir = destino)
+    cat("Arquivos de", file_name, "extra?dos para", destino, "\n")
+  }
+}
+```
+
+```{r}
+#| eval: false
+
+# Descompactar e organizar arquivos .zip
+unzip_arquivos()
+
+beep()
+```
+
+### 01.02-filtrar_base_cnpj.R
+
+> Em que cada arquivo de CNPJ é filtrado pelos códigos de atividade econômica "4771701" e "4771702" (farmácias), e para cidade de São Paulo (código 7107).
+>
+> **Nota**: A receita federal usa um código de municípios próprio e a conversão para códigos do IBGE se encontra aqui. Nessa etapa, são processados os arquivos de estabelecimentos do CNPJ.
+
+#### Filtrar Arquivo de Estabelecimentos da Base de CNPJ
+
+> Definir caminhos dos diretórios.
+
+```{r}
+output_dir <- file.path(temporario_dir, "01.02-filtrar_base")
+```
+
+```{r}
+# Criar diretorio de saída caso nao exista
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+#### Selecionar Estabelecimentos da UF São Paulo e com CNAEs Específicos
+
+> Definir CNAEs para a filtragem.
+
+```{r}
+cnaes_lista <- c("4771701", "4771702")
+```
+
+> Definir município de interesse (São Paulo).
+
+```{r}
+sp_mun <- 7107
+```
+
+> Criar uma lista para armazenar os data frames.
+
+```{r}
+dados <- list()
+```
+
+> Listar arquivos no diretorio de estabelecimentos.
+
+```{r}
+arquivos_estab <- list.files(estabelecimentos_dir, full.names = TRUE)
+```
+
+> Iterar sobre os arquivos e processá-los.
+
+```{r}
+for (caminho_arquivo in arquivos_estab) {
+  cat("Processando:", caminho_arquivo, "\n")
+
+  tryCatch({
+    # Ler o arquivo CSV
+    estab <- fread(caminho_arquivo, sep = ";", encoding = "Latin-1", header = FALSE, col.names = c(
+      "CNPJ_BASICO",
+      "CNPJ_ORDEM",
+      "CNPJ_DV",
+      "IDENTIFICADOR_MATRIZ_FILIAL",
+      "NOME_FANTASIA",
+      "SITUACAO_CADASTRAL",
+      "DATA_SITUACAO_CADASTRAL",
+      "MOTIVO_SITUACAO_CADASTRAL",
+      "NOME_CIDADE_EXTERIOR",
+      "PAIS",
+      "DATA_INICIO_ATIVIDADE",
+      "CNAE_FISCAL_PRINCIPAL",
+      "CNAE_FISCAL_SECUNDARIO",
+      "TIPO_LOGRADOURO",
+      "LOGRADOURO",
+      "NUMERO",
+      "COMPLEMENTO",
+      "BAIRRO",
+      "CEP",
+      "UF",
+      "MUNICIPIO_TOM",
+      "DDD_1",
+      "TELEFONE_1",
+      "DDD_2",
+      "TELEFONE_2",
+      "DDD_FAX",
+      "FAX",
+      "CORREIO_ELETRONICO",
+      "SITUACAO_ESPECIAL",
+      "DATA_SITUACAO_ESPECIAL"
+    ))
+
+    # Converter colunas para os tipos adequados
+    estab <- estab %>%
+      mutate(
+        CNAE_FISCAL_PRINCIPAL = as.character(CNAE_FISCAL_PRINCIPAL),
+        CEP = as.character(CEP),
+        UF = as.character(UF),
+        MUNICIPIO_TOM = as.integer(MUNICIPIO_TOM),
+        DDD_1 = as.character(DDD_1),
+        TELEFONE_1 = as.character(TELEFONE_1),
+        DDD_2 = as.character(DDD_2),
+        TELEFONE_2 = as.character(TELEFONE_2)
+      )
+
+    # Filtrar pelos CNAEs desejados
+    estab <- estab[CNAE_FISCAL_PRINCIPAL %in% cnaes_lista]
+
+    # Filtrar pela UF (Sao Paulo)
+    estab <- estab[MUNICIPIO_TOM == sp_mun]
+
+    cat("Processado:", caminho_arquivo, "\n")
+
+    # Adicionar o data frame a lista
+    dados <- append(dados, list(estab))
+  }, error = function(e) {
+    cat("Erro ao processar o arquivo", caminho_arquivo, ":", e$message, "\n")
+  })
+}
+
+beep()
+```
+
+```{r}
+estab <- rbindlist(dados, use.names = TRUE, fill = TRUE)
+```
+
+> Salvar o DataFrame processado.
+
+```{r}
+fwrite(estab, file.path(output_dir, "01.02.01-estabelecimentos_spcap_farmacias.csv"), sep = ";", row.names = FALSE)
+```
+
+### 01.03-filtrar_dados_empresas_socios.R
+
+> Em que são integrados os dados de empresa e sócios de cada estabelecimento. Creio que tais etapas não serão necessárias se o foco for nos estabelecimentos.
+
+#### Filtrar Bases Empresas e Sócios
+
+> Definir caminhos dos diretórios.
+
+```{r}
+output_dir <- file.path(temporario_dir, "01.03-filtrar_dados_empresas_socios")
+```
+
+> Criar diretorio de saida caso não exista.
+
+```{r}
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+> Ler arquivo '01.02.01-estabelecimentos_spcap_farmacias.csv' gerado na etapa 01.02.
+
+```{r}
+estab <- fread(file.path(temporario_dir, "01.02-filtrar_base/01.02.01-estabelecimentos_spcap_farmacias.csv"), sep = ";", encoding = "Latin-1")
+```
+
+> Criar uma lista para armazenar os data frames filtrados.
+
+```{r}
+dados_empresas <- list()
+```
+
+> Listar arquivos no diretorio de empresas.
+
+```{r}
+arquivos_empresas <- list.files(empresas_dir, full.names = TRUE)
+```
+
+> Iterar sobre os arquivos e processá-los.
+
+```{r}
+for (caminho_arquivo in arquivos_empresas) {
+  if (file.exists(caminho_arquivo)) {
+    cat("Processando:", caminho_arquivo, "\n")
+
+    tryCatch({
+      # Ler o arquivo CSV
+      empresas <- fread(caminho_arquivo, sep = ";", encoding = "Latin-1", header = FALSE, col.names = c(
+        "CNPJ_BASICO",
+        "RAZAO_SOCIAL_NOME_EMPRESARIAL",
+        "NATUREZA_JURIDICA",
+        "QUALIFICACAO_RESPONSAVEL",
+        "CAPITAL_SOCIAL_EMPRESA",
+        "PORTE_EMPRESA",
+        "ENTE_FEDERATIVO_RESPONSAVEL"
+      ))
+
+      # Converter tipos de colunas conforme necessario
+      empresas <- empresas %>%
+        mutate(
+          CNPJ_BASICO = as.integer(CNPJ_BASICO),
+          NATUREZA_JURIDICA = as.integer(NATUREZA_JURIDICA)
+        )
+
+      # Filtrar pelos CNPJs existentes em estab
+      empresas <- empresas[CNPJ_BASICO %in% estab$CNPJ_BASICO]
+
+      # Adicionar o data frame à lista
+      dados_empresas <- append(dados_empresas, list(empresas))
+
+    }, error = function(e) {
+      cat("Erro ao processar o arquivo", caminho_arquivo, ":", e$message, "\n")
+    })
+  }
+}
+
+beep()
+```
+
+> Concatenar todos os data frames da lista em um único `data.table`.
+
+```{r}
+empresas <- rbindlist(dados_empresas, use.names = TRUE, fill = TRUE)
+```
+
+> Salvar o dataframe resultante.
+
+```{r}
+fwrite(empresas, file.path(output_dir, "01.03.01-empresas_redepharma.csv"), sep = ";", row.names = FALSE)
+```
+
+> Listar arquivos no diretório de sócios.
+
+```{r}
+arquivos_socios <- list.files(socios_dir, full.names = TRUE)
+```
+
+> Criar uma lista para armazenar os data frames filtrados.
+
+```{r}
+dados_socios <- list()
+```
+
+> Iterar sobre os arquivos e processá-los.
+
+```{r}
+for (caminho_arquivo in arquivos_socios) {
+  if (file.exists(caminho_arquivo)) {
+    cat("Processando:", caminho_arquivo, "\n")
+
+    tryCatch({
+      # Ler o arquivo CSV
+      socios <- fread(caminho_arquivo, sep = ";", encoding = "Latin-1", header = FALSE, col.names = c(
+        "CNPJ_BASICO",
+        "IDENTIFICADOR_SOCIO",
+        "NOME_SOCIO",
+        "CPF_CNPJ_SOCIO",
+        "QUALIFICACAO_SOCIO",
+        "DATA_ENTRADA_SOCIEDADE",
+        "PAIS",
+        "CPF_REPRESENTANTE",
+        "NOME_REPRESENTANTE",
+        "QAUALIFICACAO_REPRESENTANTE",
+        "FAIXA_ETARIA"
+      ))
+
+      # Converter tipos de colunas conforme necessario
+      socios <- socios %>%
+        mutate(
+          CNPJ_BASICO = as.integer(CNPJ_BASICO))
+
+      # Filtrar pelos CNPJs existentes em estab
+      socios <- socios[CNPJ_BASICO %in% estab$CNPJ_BASICO]
+
+      # Adicionar o data frame à lista
+      dados_socios <- append(dados_socios, list(socios))
+
+    }, error = function(e) {
+      cat("Erro ao processar o arquivo", caminho_arquivo, ":", e$message, "\n")
+    })
+  }
+}
+
+beep()
+```
+
+> Concatenar todos os data frames da lista em um único `data.table`.
+
+```{r}
+socios <- rbindlist(dados_socios, use.names = TRUE, fill = TRUE)
+```
+
+> Salvar o dataframe resultante.
+
+```{r}
+fwrite(
+  socios,
+  file.path(output_dir, "01.03.02-socios_redepharma.csv"),
+  sep = ";",
+  row.names = FALSE
+)
+```
+
+### 01.04-unir_estab_empresas_socios.R
+
+#### Unir Bases de Estabelecimentos — Empresas e Sócios
+
+> Definir caminhos dos diretórios.
+
+```{r}
+output_dir <- file.path(temporario_dir, "01.04-unir_estab_empresas_socios")
+```
+
+> Criar diretorio de saida caso não exista.
+
+```{r}
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+> Ler arquivos gerados nas etapas 01.02 e 01.03.
+
+```{r}
+estab <- fread(file.path(temporario_dir, "01.02-filtrar_base/01.02.01-estabelecimentos_spcap_farmacias.csv"), sep = ";", encoding = "Latin-1")
+
+empresas <- fread(file.path(temporario_dir, "01.03-filtrar_dados_empresas_socios/01.03.01-empresas_redepharma.csv"), sep = ";", encoding = "Latin-1")
+
+socios <- fread(file.path(temporario_dir, "01.03-filtrar_dados_empresas_socios/01.03.02-socios_redepharma.csv"), sep = ";", encoding = "Latin-1")
+```
+
+> Editar dataframe sócios.
+
+```{r}
+socios <- socios %>%
+  filter(!is.na(NOME_SOCIO) & !is.na(CPF_CNPJ_SOCIO)) %>%
+  mutate(across(where(is.character), ~ gsub("\\*", "", .))) %>%  # Remover "*"
+  mutate(SOCIO_INFO = paste0(NOME_SOCIO, " - ", CPF_CNPJ_SOCIO)) %>%
+  group_by(CNPJ_BASICO) %>%
+  mutate(SOCIO_NUM = row_number()) %>%
+  ungroup() %>%
+  select(CNPJ_BASICO, SOCIO_NUM, SOCIO_INFO) %>%
+  pivot_wider(names_from = SOCIO_NUM, values_from = SOCIO_INFO, names_prefix = "SOCIO_", values_fill = list(SOCIO_INFO = "NA"))
+```
+
+> Unir estabelecimentos, empresas e sócios.
+
+```{r}
+estab_emp_soc <- estab %>%
+  left_join(empresas, by = "CNPJ_BASICO") %>%
+  left_join(socios, by = "CNPJ_BASICO")
+```
+
+> Salvar o dataframe resultante.
+
+```{r}
+fwrite(estab_emp_soc, file.path(output_dir, "01.04.01-estab_emp_soc_spcap_farmacias.csv"), sep = ";", row.names = FALSE)
+```
+
+### 01.05-adicionar_informacoes_porte_traduzir_base.R
+
+> Em que retirei os Microempreendedores Individuais da base, ainda adicionando porte empresarial e também "traduzindo" os códigos de município e e afins.
+
+#### Adicionar Informações de Porte Empresarial e Fazer Traduções na Base
+
+> Definir caminhos dos diretórios.
+
+```{r}
+output_dir <- file.path(
+  temporario_dir,
+  "01 05-adicionar_informacoes_porte_traduzir_base"
+)
+```
+
+> Criar diretório de saida caso não exista.
+
+```{r}
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+```{r}
+# Ler arquivo gerado na etapa 01.04
+estab_emp_soc <-
+  file.path(
+    temporario_dir,
+    "01.04-unir_estab_empresas_socios/01.04.01-estab_emp_soc_spcap_farmacias.csv"
+  ) |>
+    fread(sep = ";", encoding = "Latin-1")
+```
+
+> Ler arquivos de corespondência para Município, Natureza Jurídica e CNAE
+>
+> Municípios
+>
+> Baixar correspondência com códigos do IBGE pelo link abaixo, na aba 'Tabela de Órgãos e Municípios'
+>
+> https://dados.gov.br/dados/conjuntos-dados/tabela-de-rgos-e-municpios#:~:text=Info,RFB%20e%20dom%C3%ADnios%20de%20endere%C3%A7amento.
+
+> Definir nome do arquivo de correspondências para municípios.
+
+```{r}
+municipios_arquivo <- "https://www.gov.br/receitafederal/dados/municipios.csv"
+```
+
+> Ler arquivo de correspondência para municípios.
+
+```{r}
+municipios_trad <- read.csv(municipios_arquivo, sep=";", fileEncoding = "latin1")
+```
+
+> Corrigir nomes das colunas.
+
+```{r}
+colnames(municipios_trad) <- gsub("\\.+", "_", colnames(municipios_trad))
+```
+
+> Selecionar colunas que serão utilizadas.
+
+```{r}
+municipios_trad <- municipios_trad[, c("CÓDIGO_DO_MUNICÍPIO_TOM", "CÓDIGO_DO_MUNICÍPIO_IBGE", "MUNICÍPIO_IBGE")]
+```
+
+> Renomear colunas.
+
+```{r}
+colnames(municipios_trad) <- c("MUNICIPIO_TOM", "MUNICIPIO_IBGE", "MUNICIPIO")
+```
+
+> Naturezas Jurídicas.
+> Definir nome do arquivo de correspondências para Natureza Jurídica.
+
+```{r}
+naturezas_juridicas_arquivo <- "F.K03200$Z.D50111.NATJUCSV"
+```
+
+> Ler arquivo de dados do Simples Nacional.
+
+```{r}
+naturezas_juridicas_trad <- read.csv(file.path(demais_arquivos_dir, naturezas_juridicas_arquivo), sep=";", fileEncoding = "latin1", header = FALSE)
+```
+
+> Atribuir nomes às colunas.
+
+```{r}
+colnames(naturezas_juridicas_trad) <- c("NATUREZA_JURIDICA", "DESCRICAO")
+```
+
+> Garantir que "NATUREZA_JURIDICA" seja do tipo inteiro.
+
+```{r}
+naturezas_juridicas_trad$NATUREZA_JURIDICA <- as.integer(naturezas_juridicas_trad$NATUREZA_JURIDICA)
+```
+
+> CNAEs
+> Definir nome do arquivo de correspondências para CNAEs
+
+```{r}
+cnaes_arquivo <- "F.K03200$Z.D50111.CNAECSV"
+```
+
+> Ler arquivo de dados do Simples Nacional
+
+```{r}
+cnaes_trad <- read.csv(file.path(demais_arquivos_dir, cnaes_arquivo), sep=";", fileEncoding = "latin1", header = FALSE)
+```
+
+> Atribuir nomes às colunas.
+
+```{r}
+colnames(cnaes_trad) <- c("CNAE", "DESCRICAO")
+```
+
+> Garantir que "CNAE" seja do tipo caractere (string).
+
+```{r}
+cnaes_trad$CNAE <- as.character(cnaes_trad$CNAE)
+```
+
+#### Unir ou Traduzir Conforme Correspondências
+
+> Unir os dataframes para Municípios.
+
+```{r}
+estab_emp_soc <- merge(estab_emp_soc, municipios_trad, by = "MUNICIPIO_TOM", all.x = TRUE)
+estab_emp_soc <- subset(estab_emp_soc, select = -MUNICIPIO_TOM)
+```
+
+> Criar um dicionário de mapeamento {NATUREZA_JURIDICA: DESCRICAO}
+
+```{r}
+naturezas_juridicas_dict <- setNames(naturezas_juridicas_trad$DESCRICAO, naturezas_juridicas_trad$NATUREZA_JURIDICA)
+```
+
+> Aplicar o mapeamento (tradução).
+
+```{r}
+estab_emp_soc$NATUREZA_JURIDICA <- naturezas_juridicas_dict[as.character(estab_emp_soc$NATUREZA_JURIDICA)]
+```
+
+> Traduzir códigos de matriz e filial.
+
+```{r}
+estab_emp_soc$MATRIZ_FILIAL <- recode(estab_emp_soc$IDENTIFICADOR_MATRIZ_FILIAL, `1` = "Matriz", `2` = "Filial")
+estab_emp_soc <- subset(estab_emp_soc, select = -IDENTIFICADOR_MATRIZ_FILIAL)
+```
+
+> Definir dicionário de mapeamento de situação cadastral.
+
+```{r}
+situacao_map <- setNames(c("Nula", "Ativa", "Suspensa", "Inapta", "Baixada"), c(1, 2, 3, 4, 8))
+```
+
+> Aplicar o mapeamento.
+
+```{r}
+estab_emp_soc$SITUACAO_CADASTRAL <- recode(estab_emp_soc$SITUACAO_CADASTRAL, !!!situacao_map)
+```
+
+#### Listar CNPJs MEI e Simples
+
+> Definir nome do arquivo para o Simples Nacional
+
+```{r}
+simples_arquivo <- "F.K03200$W.SIMPLES.CSV.D50111"
+```
+
+> Ler arquivo de dados do Simples Nacional.
+
+```{r}
+simples <-
+  file.path(demais_arquivos_dir, simples_arquivo) |>
+  read.csv(
+    sep = ";",
+    encoding = "latin1",
+    header = FALSE,
+    col.names = c(
+      "CNPJ_BASICO",
+      "SIMPLES",
+      "DATA_OPCAO_SIMPLES",
+      "DATA_EXCLUSAO_SIMPLES",
+      "MEI",
+      "DATA_OPCAO_MEI",
+      "DATA_EXCLUSAO_MEI"
+    )
+  )
+
+beep()
+```
+
+> Filtrar dados do Simples.
+
+```{r}
+simples <- simples[simples$CNPJ_BASICO %in% estab_emp_soc$CNPJ_BASICO, ]
+```
+
+> Listar CNPJ básicos do Simples Nacional.
+
+```{r}
+cnpj_simples <- simples[simples$SIMPLES == "S", c("CNPJ_BASICO", "SIMPLES")]
+```
+
+> Salvar o dataframe como CSV.
+
+```{r}
+dir <- file.path(
+  temporario_dir,
+  "01.05-adicionar_informacoes_porte_traduzir_base"
+)
+
+if (!dir.exists(dir)) dir.create(dir)
+```
+
+```{r}
+cnpj_simples |>
+  write.csv(
+    file.path(
+      temporario_dir,
+      "01.05-adicionar_informacoes_porte_traduzir_base",
+      "01.05.01-simples_spcap_farmacias.csv"
+    ),
+    row.names = FALSE
+  )
+```
+
+> Listar CNPJ básicos Microempreendedores Individuais.
+
+```{r}
+cnpj_mei <- simples[simples$MEI == "S", c("CNPJ_BASICO", "MEI")]
+```
+
+> Salvar o dataframe como CSV.
+
+```{r}
+write.csv(cnpj_simples, file.path(temporario_dir,
+                                  '01.05-adicionar_informacoes_porte_traduzir_base/01.05.02-mei_spcap_farmacias.csv'), row.names = FALSE)
+```
+
+> Unir 'cnpj_completo' resultante com 'cnpj_simples'.
+
+```{r}
+estab_emp_soc <- merge(estab_emp_soc, cnpj_simples, by = "CNPJ_BASICO", all.x = TRUE)
+```
+
+> Unir 'cnpj_completo' resultante com 'cnpj_mei'.
+
+```{r}
+estab_emp_soc <- merge(estab_emp_soc, cnpj_mei, by = "CNPJ_BASICO", all.x = TRUE)
+```
+
+#### Corrigir Valores de Capital Social e Porte
+
+> Tratar a coluna `CAPITAL_SOCIAL_EMPRESA`.
+
+```{r}
+estab_emp_soc$CAPITAL_SOCIAL_EMPRESA <- estab_emp_soc$CAPITAL_SOCIAL_EMPRESA %>%
+  gsub("\\.", "", .) %>%  # Remover separadores de milhar
+  gsub(",", ".", .) %>%   # Trocar vírgula decimal por ponto
+  as.numeric()            # Converter para número
+```
+
+> Criar dicionário de mapeamento.
+
+```{r}
+porte_map <- setNames(c("Não informado", "Microempresa", "Empresa de pequeno porte", "Demais portes"),
+                      c(0, 1, 3, 5))
+```
+
+> Substituir os valores da coluna `PORTE_EMPRESA`.
+
+```{r}
+estab_emp_soc$PORTE_EMPRESA <- recode(estab_emp_soc$PORTE_EMPRESA, !!!porte_map)
+```
+
+> Substituir "PORTE_EMPRESA" por "MEI" onde "MEI" é igual a "S".
+
+```{r}
+estab_emp_soc$PORTE_EMPRESA[estab_emp_soc$MEI == "S"] <- "MEI"
+estab_emp_soc <- subset(estab_emp_soc, select = -MEI)
+```
+
+> Salvar arquivo gerado.
+
+```{r}
+write.csv(estab_emp_soc, file.path(temporario_dir,
+                                  '01.05-adicionar_informacoes_porte_traduzir_base/01.05.03-estab_emp_soc_trad_spcap_farmacias.csv'), row.names = FALSE)
+```
+
+### 01.06-geocodificar_enderecos.R
+
+> Em que utilizo o pacote geocodebr do IPEA para geocodificar os endereços. É provável que devam ser feitas algumas correções nessa etapa frente às atualizações do pacote.
+
+```{r}
+output_dir <- file.path(temporario_dir, "01.06-geocodificar_enderecos")
+```
+
+> Criar diretorio de saida caso não exista.
+
+```{r}
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+> Ler 01.05.03 arquivo gerado na etapa 01.05.
+
+```{r}
+estab_emp_soc <-
+  file.path(
+    temporario_dir,
+    "01.05-adicionar_informacoes_porte_traduzir_base",
+    "01.05.03-estab_emp_soc_trad_spcap_farmacias.csv"
+  ) |>
+  read.csv(sep = ",", encoding = "Latin-1")
+```
+
+#### Tratar Dados para Geocodificar
+
+> Adicionar 0s nos CEPs com menos de 8 dígitos.
+
+```{r}
+estab_emp_soc$CEP <- sprintf("%08d", as.numeric(trimws(estab_emp_soc$CEP)))
+```
+
+> Criar uma nova coluna 'ENDERECO' unindo 'TIPO_LOGRADOURO' e 'LOGRADOURO'.
+
+```{r}
+estab_emp_soc$ENDERECO <- paste(estab_emp_soc$TIPO_LOGRADOURO,
+                                estab_emp_soc$LOGRADOURO)
+```
+
+> Transformar em inteiro a coluna de N?mero do endereço.
+
+```{r}
+estab_emp_soc$NUMERO <- suppressWarnings(as.integer(estab_emp_soc$NUMERO))
+```
+
+#### Geocodificar Endereços
+
+> Definir os campos para geocodificação.
+
+```{r}
+campos <- geocodebr::definir_campos(
+  estado = "UF",
+  municipio = "MUNICIPIO",
+  logradouro = "ENDERECO",
+  numero = "NUMERO",
+  cep = "CEP",
+  localidade = "BAIRRO"
+)
+```
+
+> Geocodificar com pacote `geocodebr`
+
+```{r}
+estab_emp_soc_geoloc <- geocodebr::geocode(
+  enderecos = estab_emp_soc,
+  campos_endereco = campos,
+  resultado_completo = TRUE,
+  resultado_sf = FALSE,
+  verboso = TRUE,
+  cache = TRUE,
+  n_cores = 1
+)
+
+beep()
+```
+
+> Transformar o data frame de empresas em um objeto `sf` com coordenadas
+
+```{r}
+estab_emp_soc_geom <-
+  estab_emp_soc_geoloc |>
+  st_as_sf(
+    coords = c("lon", "lat"),
+    crs = 4326
+  )
+```
+
+> Baixar arquivos shapefile dos distritos de São Paulo na aba "Layers"
+> http://dados.prefeitura.sp.gov.br/dataset/distritos
+
+> Defnir caminho do arquivo de distritos
+
+```{r}
+dir <- file.path(data_raw_dir, "LAYER_DISTRITO")
+
+if (!dir.exists(file.path(dir))) dir.create(dir)
+```
+
+```{r}
+distritos_sp_arquivo_zip <- file.path(
+  data_raw_dir,
+  "LAYER_DISTRITO",
+  "layerdistrito.zip"
+)
+```
+
+```{r}
+#| eval: false
+#| include: false
+
+file.path(
+    "http://dados.prefeitura.sp.gov.br",
+    "dataset",
+    "af41e7c4-ae27-4bfc-9938-170151af7aee",
+    "resource",
+    "9e75c2f7-5729-4398-8a83-b4640f072b5d",
+    "download",
+    "layerdistrito.zip"
+  ) |>
+    curl_download(destfile = distritos_sp_arquivo_zip)
+```
+
+```{r}
+distritos_sp_arquivo_zip |> unzip(exdir = dirname(distritos_sp_arquivo_zip))
+```
+
+> Abrir o arquivo `.shp` de distritos em São Paulo.
+
+```{r}
+distritos_sp_arquivo <- file.path(
+  data_raw_dir,
+  "LAYER_DISTRITO",
+  "DEINFO_DISTRITO.shp"
+)
+```
+
+> Transformar o shapefile de distritos para o CRS adequado.
+
+```{r}
+distritos_sp <-
+  distritos_sp_arquivo |>
+  st_read() |>
+  st_transform(crs = st_crs(estab_emp_soc_geom))
+```
+
+>  Transformar COD_DIST em numérica.
+
+```{r}
+distritos_sp$COD_DIST <- as.numeric(distritos_sp$COD_DIST)
+```
+
+> Realizar a interseção.
+
+```{r}
+intersecao <- st_intersects(estab_emp_soc_geom, distritos_sp)
+```
+
+> Adicionar os dados de distrito.
+
+```{r}
+estab_emp_soc_geom <-
+  estab_emp_soc_geom %>%
+  mutate(
+    # Adicionar o nome do distrito ou "NSA" caso nao haja interse?ao
+    DISTRITO_SP = map_chr(1:nrow(estab_emp_soc_geom), ~{
+      # Obter o munic?pio para a linha atual
+      municipio <- estab_emp_soc_geom$MUNICIPIO[.x] # Substitua pelo nome correto da coluna do munic?pio
+
+      if (municipio == "Sao Paulo") {
+        # Se for Sao Paulo, for?ar a interse?ao com algum distrito
+        distrito <- ifelse(length(intersecao[[.x]]) > 0, distritos_sp$NOME_DIST[intersecao[[.x]][1]], "NSA")
+        distrito
+      } else {
+        # Caso contr?rio, usar a l?gica normal de interse?ao
+        if (length(intersecao[[.x]]) > 0) {
+          distritos_sp$NOME_DIST[intersecao[[.x]][1]]
+        } else {
+          "NSA"
+        }
+      }
+    }),
+
+    # Adicionar o c?digo do distrito ou "NSA"
+    DISTRITO_SP_IBGE = map_chr(1:nrow(estab_emp_soc_geom), ~{
+      municipio <- estab_emp_soc_geom$MUNICIPIO[.x] # Substitua pelo nome correto da coluna do munic?pio
+
+      if (municipio == "Sao Paulo") {
+        # Se for Sao Paulo, for?ar a interse?ao com algum distrito
+        distrito_ibge <- ifelse(length(intersecao[[.x]]) > 0, as.character(distritos_sp$COD_DIST[intersecao[[.x]][1]]), "NSA")
+        distrito_ibge
+      } else {
+        # Caso contr?rio, usar a l?gica normal de interse?ao
+        if (length(intersecao[[.x]]) > 0) {
+          as.character(distritos_sp$COD_DIST[intersecao[[.x]][1]])
+        } else {
+          "NSA"
+        }
+      }
+    })
+  )
+
+  beep()
+```
+
+> Transformar a geometry em latitude e longitude
+
+```{r}
+estab_emp_soc_geom <- estab_emp_soc_geom %>%
+  mutate(lat = st_coordinates(.)[,2],
+         lon = st_coordinates(.)[,1])
+```
+
+> Escrever o arquivo a partir do dataframe gerado
+
+```{r}
+estab_emp_soc_geom |>
+  write_csv(
+    file.path(
+      temporario_dir,
+      "01.06-geocodificar_enderecos",
+      "01.06.01-estab_emp_soc_spcap_farmacias_loc.csv"
+    )
+  )
+```
+
+```{r}
+estab_emp_soc_geom
+```
+
+```{r}
+beep(3)
+```
+
+## Set the Initial Variables
+
+## Download the Data
+
+## Read and Filter the Data
+
+## Tidy the Data
+
+## Transform the Data
+
+## Validate the Data
+
+## Arrange the Data
+
+## Data Dictionary
+
+## Save the Valid Data
+
+## Visualize the Data
+
+## Citation
+
+## License
+
+::: {style="text-align: left;"}
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-bd0000.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+:::
+
+::: {.callout-important}
+The original data sources may have their own license terms and conditions.
+:::
+
+The code in this report is licensed under the [GNU General Public License Version 3](https://www.gnu.org/licenses/gpl-3.0), while the report is available under the [Creative Commons CC0 License](https://creativecommons.org/public-domain/cc0/).
+
+``` text
+Copyright (C) 2025 Clara Penz & Daniel Vartanian
+
+The code in this report is free software: you can redistribute it and/or
+modify it under the terms of the GNU General Public License as published by the
+Free Software Foundation, either version 3 of the License, or (at your option)
+any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+```
+
+## Acknowledgments
+
+<!-- ![](images/acessosan-logo.svg){style="width: 15%;"} -->
+
+This work is part of a research project by the Polytechnic School ([Poli](https://www.poli.usp.br/)) of the University of São Paulo ([USP](https://usp.br)), in partnership with the Secretariat for Food and Nutrition Security ([SESAN(https://www.gov.br/mds/pt-br/orgaos/SESAN)]) of the Ministry of Social Development, Family, and the Fight Against Hunger ([MDS](https://www.gov.br/mds/)): *AcessoSAN: Mapping Food Access to Support Public Policies on Food and Nutrition Security and Hunger Reduction in Brazilian Cities*.
+
+<!-- ![](images/cem-logo.png){style="width: 15%;"} -->
+
+This work was developed with support from the Center for Metropolitan Studies ([CEM](https://centrodametropole.fflch.usp.br)) based at the School of Philosophy, Letters and Human Sciences ([FFLCH](https://www.fflch.usp.br/)) of the University of São Paulo ([USP](https://usp.br)) and at the Brazilian Center for Analysis and Planning ([CEBRAP(https://cebrap.org.br/)]).
+
+<!-- ![](images/fapesp-logo.svg){style="width: 25%;"} -->
+
+This study was financed, in part, by the São Paulo Research Foundation ([FAPESP](https://fapesp.br/)), Brazil. Process Number [2023/10243-0](https://bv.fapesp.br/pt/auxilios/115313/mapeamento-do-acesso-ao-alimento-para-subsidiar-politicas-publicas-de-seguranca-alimentar-e-nutricio/).
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

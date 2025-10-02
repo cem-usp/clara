@@ -1,0 +1,70 @@
+editor: source
+
+execute:
+  cache: false # "Danger Will Robinson!"
+  freeze: false # If you plan to use it, remember to disable it afterward!
+
+project:
+  type: website
+  output-dir: docs
+  render: [index.qmd]
+  post-render: "R/_post-render.R"
+
+title: Clara
+author: "Clara Penz & Daniel Vartanian"
+keyword: >
+  Pipelines, Data Munging, Data Science, Spatial Data, rstats, Open Data,
+  Open Science, Brazil
+date: today
+date-format: long
+
+website:
+  # favicon: images/favicon.svg
+  site-url: https://cem-usp.github.io/clara/
+  repo-url: https://github.com/cem-usp/clara/
+  issue-url: https://github.com/cem-usp/clara/issues/
+  # open-graph:
+  #   image: images/og-image.png
+  #   image-width: 2400
+  #   image-height: 1600
+  #   image-alt: clara
+  repo-branch: main
+  repo-actions: [edit, source, issue]
+  search: false
+  navbar:
+    title: false
+    background: "#215f9a"
+    right:
+      - icon: github
+        href: https://github.com/cem-usp/clara/
+        aria-label: GitHub
+
+lightbox:
+  match: auto
+  effect: fade
+  desc-position: bottom
+  loop: false
+
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: right
+    locale: en
+    language: en-us
+    code-fold: false
+    code-link: true
+    code-tools: false
+    df-print: paged
+    fig-align: center
+    cap-location: top
+    lightbox: true
+    callout-appearance: simple
+    csl: csl/english-apa-author-date.csl
+    theme: [cosmo, scss/styles.scss, brand]
+    other-links:
+      - text: Center for Metropolitan Studies Website
+        href: https://centrodametropole.fflch.usp.br
+
+google-scholar: true
+bibliography: references.bib
